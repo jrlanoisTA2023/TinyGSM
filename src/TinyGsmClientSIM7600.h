@@ -230,7 +230,7 @@ class TinyGsmSim7600 : public TinyGsmModem<TinyGsmSim7600>,
     if (!testAT()) { return false; }
     sendAT(GF("+CRESET"));
     if (waitResponse(10000L) != 1) { return false; }
-    delay(5000L);  // TODO(?):  Test this delay!
+    delay(24000L); // https://github.com/vshymanskyy/TinyGSM/pull/736
     return init(pin);
   }
 
@@ -316,7 +316,7 @@ class TinyGsmSim7600 : public TinyGsmModem<TinyGsmSim7600>,
 
     // Set the external authentication
     if (user && strlen(user) > 0) {
-      sendAT(GF("+CGAUTH=1,0,\""), user, GF("\",\""), pwd, '"');
+      sendAT(GF("+CGAUTH=1,0,\""), pwd, GF("\",\""), user, '"'); // From https://github.com/vshymanskyy/TinyGSM/pull/678
       waitResponse();
     }
 
@@ -432,7 +432,14 @@ class TinyGsmSim7600 : public TinyGsmModem<TinyGsmSim7600>,
    */
  protected:
   // enable GPS
-  bool enableGPSImpl() {
+  bool enableGPSImpl(GpsStartMode startMode = GPS_START_AUTO) {
+    // Fix from https://github.com/vshymanskyy/TinyGSM/pull/642
+    switch (startMode) {
+      case GPS_START_COLD: sendAT(GF("+CGPSCOLD")); break;
+      case GPS_START_HOT: sendAT(GF("+CGPSHOT")); break;
+      default: sendAT(); break;
+    }
+    if (waitResponse() != 1) { return false; }
     sendAT(GF("+CGPS=1"));
     if (waitResponse() != 1) { return false; }
     return true;
@@ -506,11 +513,10 @@ class TinyGsmSim7600 : public TinyGsmModem<TinyGsmSim7600>,
       ialt   = streamGetFloatBefore(',');  // MSL Altitude. Unit is meters
       ispeed = streamGetFloatBefore(',');  // Speed Over Ground. Unit is knots.
       streamSkipUntil(',');                // Course Over Ground. Degrees.
-      streamSkipUntil(',');  // After set, will report GPS every x seconds
       iaccuracy = streamGetFloatBefore(',');  // Position Dilution Of Precision
       streamSkipUntil(',');   // Horizontal Dilution Of Precision
-      streamSkipUntil(',');   // Vertical Dilution Of Precision
-      streamSkipUntil('\n');  // TODO(?) is one more field reported??
+      streamSkipUntil('\n');  // Vertical Dilution Of Precision
+      // GPS Fixes from https://github.com/vshymanskyy/TinyGSM/pull/736
 
       // Set pointers
       if (lat != NULL)
@@ -644,15 +650,34 @@ class TinyGsmSim7600 : public TinyGsmModem<TinyGsmSim7600>,
   }
 
   int16_t modemSend(const void* buff, size_t len, uint8_t mux) {
-    sendAT(GF("+CIPSEND="), mux, ',', (uint16_t)len);
-    if (waitResponse(GF(">")) != 1) { return 0; }
-    stream.write(reinterpret_cast<const uint8_t*>(buff), len);
-    stream.flush();
-    if (waitResponse(GF(GSM_NL "+CIPSEND:")) != 1) { return 0; }
-    streamSkipUntil(',');  // Skip mux
-    streamSkipUntil(',');  // Skip requested bytes to send
-    // TODO(?):  make sure requested and confirmed bytes match
-    return streamGetIntBefore('\n');
+    // https://github.com/vshymanskyy/TinyGSM/pull/746
+    std::int16_t ret = 0;
+    constexpr std::size_t max_len = 1400;
+
+    std::uint8_t cursor_buffer[max_len];
+    auto buff_convert = reinterpret_cast<const std::uint8_t *>(buff);
+
+    for (size_t cursor = 0; cursor < len; cursor += max_len)
+    {
+      const size_t to_send = std::min(max_len, len - cursor);
+
+      sendAT(GF("+CIPSEND="), mux, ',', (uint16_t)to_send);
+      if (waitResponse(GF(">")) != 1) { return 0; }
+
+      std::copy(buff_convert + cursor, buff_convert + cursor + to_send, cursor_buffer);
+
+      stream.write(cursor_buffer, to_send);
+      stream.flush();
+
+      if (waitResponse(GF(GSM_NL "+CIPSEND:")) != 1) { return 0; }
+
+      streamSkipUntil(',');  // Skip mux
+      streamSkipUntil(',');  // Skip requested bytes to send
+
+      ret = streamGetIntBefore('\n');
+    }
+
+    return ret;
   }
 
   size_t modemRead(size_t size, uint8_t mux) {
