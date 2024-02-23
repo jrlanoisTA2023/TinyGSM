@@ -15,6 +15,7 @@
 #define TINY_GSM_MUX_COUNT 10
 #define TINY_GSM_BUFFER_READ_AND_CHECK_SIZE
 
+#include <algorithm> // https://github.com/jorisvervuurt/TinyGSM_SIM7600/commit/f9f0ceaf6fd63374740eb740aaae7b461b6e5d1d
 #include "TinyGsmBattery.tpp"
 #include "TinyGsmCalling.tpp"
 #include "TinyGsmGPRS.tpp"
@@ -651,11 +652,12 @@ class TinyGsmSim7600 : public TinyGsmModem<TinyGsmSim7600>,
 
   int16_t modemSend(const void* buff, size_t len, uint8_t mux) {
     // https://github.com/vshymanskyy/TinyGSM/pull/746
-    std::int16_t ret = 0;
-    constexpr std::size_t max_len = 1400;
+    // https://github.com/jorisvervuurt/TinyGSM_SIM7600/commit/f9f0ceaf6fd63374740eb740aaae7b461b6e5d1d
+    int16_t ret = 0;
+    constexpr size_t max_len = 1400;
 
-    std::uint8_t cursor_buffer[max_len];
-    auto buff_convert = reinterpret_cast<const std::uint8_t *>(buff);
+    uint8_t cursor_buffer[max_len];
+    auto buff_convert = reinterpret_cast<const uint8_t *>(buff);
 
     for (size_t cursor = 0; cursor < len; cursor += max_len)
     {
